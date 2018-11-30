@@ -769,6 +769,23 @@ static void NORETURN error_on_missing_default_upstream(void)
 	exit(1);
 }
 
+static void set_reflog_action(struct rebase_options *options)
+{
+	const char *env;
+	struct strbuf buf = STRBUF_INIT;
+
+	if (!is_interactive(options))
+		return;
+
+	env = getenv(GIT_REFLOG_ACTION_ENVIRONMENT);
+	if (env && strcmp("rebase", env))
+		return; /* only override it if it is "rebase" */
+
+	strbuf_addf(&buf, "rebase -i (%s)", options->action);
+	setenv(GIT_REFLOG_ACTION_ENVIRONMENT, buf.buf, 1);
+	strbuf_release(&buf);
+}
+
 int cmd_rebase(int argc, const char **argv, const char *prefix)
 {
 	struct rebase_options options = {
@@ -971,6 +988,7 @@ int cmd_rebase(int argc, const char **argv, const char *prefix)
 
 	if (action != NO_ACTION && !in_progress)
 		die(_("No rebase in progress?"));
+	setenv(GIT_REFLOG_ACTION_ENVIRONMENT, "rebase", 0);
 
 	if (action == ACTION_EDIT_TODO && !is_interactive(&options))
 		die(_("The --edit-todo action can only be used during "
@@ -983,6 +1001,7 @@ int cmd_rebase(int argc, const char **argv, const char *prefix)
 		int fd;
 
 		options.action = "continue";
+		set_reflog_action(&options);
 
 		/* Sanity check */
 		if (get_oid("HEAD", &head))
@@ -1011,6 +1030,7 @@ int cmd_rebase(int argc, const char **argv, const char *prefix)
 		struct string_list merge_rr = STRING_LIST_INIT_DUP;
 
 		options.action = "skip";
+		set_reflog_action(&options);
 
 		rerere_clear(the_repository, &merge_rr);
 		string_list_clear(&merge_rr, 1);
@@ -1026,6 +1046,7 @@ int cmd_rebase(int argc, const char **argv, const char *prefix)
 	case ACTION_ABORT: {
 		struct string_list merge_rr = STRING_LIST_INIT_DUP;
 		options.action = "abort";
+		set_reflog_action(&options);
 
 		rerere_clear(the_repository, &merge_rr);
 		string_list_clear(&merge_rr, 1);
@@ -1438,11 +1459,12 @@ int cmd_rebase(int argc, const char **argv, const char *prefix)
 				}
 
 				strbuf_reset(&buf);
-				strbuf_addf(&buf, "rebase: checkout %s",
+				strbuf_addf(&buf, "%s: checkout %s",
+					    getenv(GIT_REFLOG_ACTION_ENVIRONMENT),
 					    options.switch_to);
 				if (reset_head(&oid, "checkout",
 					       options.head_name, 0,
-					       NULL, NULL) < 0) {
+					       NULL, buf.buf) < 0) {
 					ret = !!error(_("could not switch to "
 							"%s"),
 						      options.switch_to);
@@ -1506,7 +1528,8 @@ int cmd_rebase(int argc, const char **argv, const char *prefix)
 		printf(_("First, rewinding head to replay your work on top of "
 			 "it...\n"));
 
-	strbuf_addf(&msg, "rebase: checkout %s", options.onto_name);
+	strbuf_addf(&msg, "%s: checkout %s",
+		    getenv(GIT_REFLOG_ACTION_ENVIRONMENT), options.onto_name);
 	if (reset_head(&options.onto->object.oid, "checkout", NULL,
 		       RESET_HEAD_DETACH, NULL, msg.buf))
 		die(_("Could not detach HEAD"));
